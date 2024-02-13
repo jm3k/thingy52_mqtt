@@ -1,0 +1,29 @@
+{
+    "mqtt": {
+        "auth_config": "credentials.json",
+        "hostname": "192.168.88.159",
+        "port": 1883
+    },
+    "generic": {
+        "count": 0,
+        "timeout": 2.0,
+        "sleep": 10,
+        "verbosity": 5
+    },
+    "devices": [
+        {
+            "mac_address": "e6:82:61:f6:7e:39",
+            "topicprefix": "thingy/e68261f67e39/environment/",
+            "sensors": {
+                "temperature": true,
+                "pressure": true,
+                "humidity": true,
+                "gas": true,
+                "color": true,
+                "orientation": true,
+                "battery": true
+            }
+        }
+    ]
+}
+

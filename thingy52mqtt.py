@@ -23,6 +23,7 @@ thingy52mqtt.py C2:9E:52:63:18:8A  --no-mqtt --gas --temperature --humidity --pr
 """
 
 import paho.mqtt.publish as publish
+import paho.mqtt.client as mqtt
 from bluepy import btle, thingy52
 import time
 import os
@@ -30,6 +31,7 @@ import argparse
 import binascii
 import logging
 import signal, sys
+import json
 
 next_event_second = 0
 args = None
@@ -163,6 +165,9 @@ def mqttSend(key, value, unit):
                         payload = payload,
                         hostname = args.hostname, 
                         port = args.port, 
+                        auth = args.auth,
+                        protocol = mqtt.MQTTv5,
+                        client_id = 'RPi3',
                         retain = True)
         except:
             logging.error("Failed to publish message, details follow")
@@ -188,7 +193,7 @@ class MQTTDelegate(btle.DefaultDelegate):
             teptep = binascii.b2a_hex(data)
             value = self._str_to_int(teptep[:-2]) + int(teptep[-2:], 16) / 100.0
             temperature = value
-            
+
         elif (hnd == thingy52.e_pressure_handle):
             pressure_int, pressure_dec = self._extract_pressure_data(data)
             value = pressure_int + pressure_dec / 100.0
@@ -295,7 +300,7 @@ class MQTTDelegate(btle.DefaultDelegate):
 
 def parseArgs():
     parser = argparse.ArgumentParser()
-    parser.add_argument('mac_address', action='store', help='MAC address of BLE peripheral')
+    parser.add_argument('--mac_address', action='store', dest='mac_address', default='11:22:33:44:55:66', help='MAC address of BLE peripheral')
     parser.add_argument('-n', action='store', dest='count', default=0,
                             type=int, help="Number of times to loop data, if set to 0, loop endlessly")
     parser.add_argument('-t', action='store', dest='timeout', type=float, default=2.0, help='time between polling')
@@ -313,7 +318,8 @@ def parseArgs():
     parser.add_argument('--no-mqtt', dest='mqttdisabled', action='store_true', default=False)
     parser.add_argument('--host', dest='hostname', default='localhost', help='MQTT hostname')
     parser.add_argument('--port', dest='port', default=1883, type=int, help='MQTT port')
-    parser.add_argument('--topic-prefix', dest='topicprefix', default="/home/thingy/", help='MQTT topic prefix to post the values, prefix + key is used as topic')
+    parser.add_argument('--credentials', dest='credentials', default=None, type=str, help='MQTT credentials JSON file')
+    parser.add_argument('--topic-prefix', dest='topicprefix', default="thingy/01/environment", help='MQTT topic prefix to post the values, prefix + key is used as topic')
 
     parser.add_argument('--sleep', dest='sleep', default=60, type=int, help='Interval to publish values.')
 
@@ -395,6 +401,50 @@ def connect(notificationDelegate):
             logging.debug('Could not connect, sleeping a while before retry')
             time.sleep(args.sleep) # FIXME: use different sleep value??
 
+def loadCredentials(fname):
+    global args
+    args.auth = None
+
+    if fname is not None:
+        if os.path.exists(fname):
+            auth = json.load(open(fname))
+            args.auth = {'username':auth['mqtt_username'], 'password':auth['mqtt_password']}
+
+def loadConfig():
+    global args
+
+    cfg = None
+    cfg_fname = "config.json"
+
+    if os.path.exists(cfg_fname):
+        cfg = json.load(open(cfg_fname))
+
+    if cfg is not None:
+        mqtt = cfg['mqtt']
+        if 'auth_config' in mqtt: args.credentials = mqtt['auth_config']
+        if 'hostname' in mqtt: args.hostname = mqtt['hostname']
+        if 'port' in mqtt: args.port = mqtt['port']
+
+        dev = cfg['devices'][0]
+        if 'mac_address' in dev: args.mac_address = dev['mac_address']
+        if 'topicprefix' in dev: args.topic_prefix = dev['topicprefix']
+        if 'sensors' in dev:
+            sensors = dev['sensors']
+            if 'temperature' in sensors: args.temperature = sensors['temperature']
+            if 'pressure' in sensors: args.pressure = sensors['pressure']
+            if 'humidity' in sensors: args.humidity = sensors['humidity']
+            if 'gas' in sensors: args.gas = sensors['gas']
+            if 'color' in sensors: args.color = sensors['color']
+            if 'orientation' in sensors: args.orientation = sensors['orientation']
+            if 'battery' in sensors: args.battery = sensors['battery']
+
+        generic = cfg['generic']
+        if 'count' in generic: args.count = generic['count']
+        if 'timeout' in generic: args.timeout = generic['timeout']
+        if 'sleep' in generic: args.sleep = generic['sleep']
+        if 'verbosity' in generic: args.v = generic['verbosity']
+
+    return cfg
 
 def main():
     global args
@@ -402,6 +452,8 @@ def main():
     global battery
 
     args = parseArgs()
+    loadConfig()
+    loadCredentials(args.credentials)
 
     setupLogging()
 
@@ -424,7 +476,7 @@ def main():
 
             enableSensors()
             setNotifications(True)
-            
+
             counter = args.count
             timeNextSend = time.time()
             while connectAndReadValues:
@@ -450,7 +502,7 @@ def main():
             logging.info('Disconnected...')
             mqttSend('connected', 0, '')
             thingy = None
-    
+
     if thingy:
         try:
             thingy.disconnect()
