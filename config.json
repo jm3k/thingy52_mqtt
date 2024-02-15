@@ -2,18 +2,19 @@
     "mqtt": {
         "auth_config": "credentials.json",
         "hostname": "192.168.88.159",
-        "port": 1883
+        "port": 1883,
+        "publish_sleep_sec": 2
     },
     "generic": {
-        "count": 0,
-        "timeout": 2.0,
-        "sleep": 10,
+        "conn_retry_suspend_time_sec": 5.0,
         "verbosity": 5
     },
     "devices": [
         {
             "mac_address": "e6:82:61:f6:7e:39",
-            "topicprefix": "thingy/e68261f67e39/environment/",
+            "topicprefix": "thingy/dev01/env/",
+            "notification_period_msec": 2000,
+            "read_count": 8,
             "sensors": {
                 "temperature": true,
                 "pressure": true,
