@@ -387,18 +387,30 @@ def connect(notificationDelegate):
     global thingy
 
     connected = False
-    while not connected:
+    conn_cnt = args.conn_retries
+
+    while (conn_cnt > 0):
         try:
-            logging.info('Try to connect to ' + args.mac_address)
+            loadDevConfig(args.devices[args.dev_idx])
+            logging.info('Try to connect to: %s, dev{idx/cnt} = %d/%d' % (args.mac_address, args.dev_idx, len(args.devices)))
+
             thingy = thingy52.Thingy52(args.mac_address)
-            connected = True
             logging.info('Connected...')
             thingy.setDelegate(notificationDelegate)
             mqttSend('connected', 1, '')
+            conn_cnt = 0
+            connected = True
+
         except btle.BTLEException as ex:
-            connected = False
-            logging.debug('Could not connect, sleeping a while before retry')
-            time.sleep(args.suspend_time)
+            conn_cnt -= 1
+            logging.debug('Could not connect, retry after: %f [sec]' % args.retry_time)
+            time.sleep(args.retry_time)
+
+    args.dev_idx += 1
+    args.dev_idx = args.dev_idx % len(args.devices)
+    logging.info('Switch to next device: dev_idx = %d', args.dev_idx)
+
+    return connected
 
 def loadCredentials(fname):
     global args
@@ -408,6 +420,24 @@ def loadCredentials(fname):
         if os.path.exists(fname):
             auth = json.load(open(fname))
             args.auth = {'username':auth['mqtt_username'], 'password':auth['mqtt_password']}
+
+def loadDevConfig(dev):
+    global args
+
+    if 'mac_address' in dev: args.mac_address = dev['mac_address']
+    if 'topicprefix' in dev: args.topicprefix = dev['topicprefix']
+    if 'notification_period_msec' in dev: args.period = dev['notification_period_msec']
+    if 'read_count' in dev: args.count = dev['read_count']
+
+    if 'sensors' in dev:
+        sensors = dev['sensors']
+        if 'temperature' in sensors: args.temperature = sensors['temperature']
+        if 'pressure' in sensors: args.pressure = sensors['pressure']
+        if 'humidity' in sensors: args.humidity = sensors['humidity']
+        if 'gas' in sensors: args.gas = sensors['gas']
+        if 'color' in sensors: args.color = sensors['color']
+        if 'orientation' in sensors: args.orientation = sensors['orientation']
+        if 'battery' in sensors: args.battery = sensors['battery']
 
 def loadConfig():
     global args
@@ -425,23 +455,13 @@ def loadConfig():
         if 'port' in mqtt: args.port = mqtt['port']
         if 'publish_sleep_sec' in mqtt: args.sleep = mqtt['publish_sleep_sec']
 
-        dev = cfg['devices'][0]
-        if 'mac_address' in dev: args.mac_address = dev['mac_address']
-        if 'topicprefix' in dev: args.topicprefix = dev['topicprefix']
-        if 'notification_period_msec' in dev: args.period = dev['notification_period_msec']
-        if 'read_count' in dev: args.count = dev['read_count']
-        if 'sensors' in dev:
-            sensors = dev['sensors']
-            if 'temperature' in sensors: args.temperature = sensors['temperature']
-            if 'pressure' in sensors: args.pressure = sensors['pressure']
-            if 'humidity' in sensors: args.humidity = sensors['humidity']
-            if 'gas' in sensors: args.gas = sensors['gas']
-            if 'color' in sensors: args.color = sensors['color']
-            if 'orientation' in sensors: args.orientation = sensors['orientation']
-            if 'battery' in sensors: args.battery = sensors['battery']
+        args.devices = cfg['devices']
+        args.dev_idx = 0
 
         generic = cfg['generic']
+        if 'conn_retry_after_time_sec' in generic: args.retry_time = generic['conn_retry_after_time_sec']
         if 'conn_retry_suspend_time_sec' in generic: args.suspend_time = generic['conn_retry_suspend_time_sec']
+        if 'conn_retries' in generic: args.conn_retries = generic['conn_retries']
         if 'verbosity' in generic: args.v = generic['verbosity']
 
     return cfg
@@ -461,65 +481,76 @@ def main():
 
     notificationDelegate = MQTTDelegate()
 
-    connectAndReadValues = True
-    periodDuration = float(args.period) / 1000.0
+    while True:
+        connectAndReadValues = True
+        periodDuration = None
 
-    while connectAndReadValues:
-        connect(notificationDelegate)
+        while connectAndReadValues:
+            status = connect(notificationDelegate)
 
-        #print("# Setting notification handler to default handler...")
-        #thingy.setDelegate(thingy52.MyDelegate())
+            if not status:
+                connectAndReadValues = False
+                thingy = None
+                continue
 
-        try:
-            # Set LED so that we know we are connected
-            thingy.ui.enable()
-            thingy.ui.set_led_mode_breathe(0x01, 50, 10000) # color 0x01 = RED, intensity, delay between breathes
-            logging.debug('LED set to breathe mode...')
+            if periodDuration is None:
+                periodDuration = float(args.period) / 1000.0
 
-            enableSensors()
-            setNotifications(True)
+            #print("# Setting notification handler to default handler...")
+            #thingy.setDelegate(thingy52.MyDelegate())
 
-            counter = args.count
-            timeNextSend = time.time()
-            logging.debug('Loop start')
-            while connectAndReadValues:
-                startTime = time.time()
-                logging.debug('counter = %d' % counter)
+            try:
+                # Set LED so that we know we are connected
+                thingy.ui.enable()
+                thingy.ui.set_led_mode_breathe(0x01, 50, 10000) # color 0x01 = RED, intensity, delay between breathes
+                logging.debug('LED set to breathe mode...')
 
-                if args.battery:
-                    value = thingy.battery.read()
-                    battery = value
+                enableSensors()
+                setNotifications(True)
 
-                thingy.waitForNotifications(timeout = (args.period / 1000.0) * 3)
+                counter = args.count
+                timeNextSend = time.time()
+                logging.debug('Loop start')
+                while connectAndReadValues:
+                    startTime = time.time()
+                    logging.debug('counter = %d' % counter)
 
-                counter -= 1
-                if counter == 0:
-                    logging.debug('count reached, exiting...')
-                    connectAndReadValues = False
+                    if args.battery:
+                        value = thingy.battery.read()
+                        battery = value
 
-                if time.time() > timeNextSend:
-                    mqttSendValues(notificationDelegate)
-                    timeNextSend = time.time() + args.sleep
+                    thingy.waitForNotifications(timeout = (args.period / 1000.0) * 3)
 
-                duration = time.time() - startTime
-                remaining = periodDuration - duration
-                if remaining < 0.0: remaining = 0.0
-                time.sleep(remaining)
+                    counter -= 1
+                    if counter == 0:
+                        logging.debug('count reached, exiting...')
+                        connectAndReadValues = False
 
-        except btle.BTLEDisconnectError as e:
-            logging.debug('BTLEDisconnectError %s' % str(e))
-            logging.info('Disconnected...')
-            mqttSend('connected', 0, '')
-            thingy = None
+                    if time.time() > timeNextSend:
+                        mqttSendValues(notificationDelegate)
+                        timeNextSend = time.time() + args.sleep
 
-    if thingy:
-        try:
-            thingy.disconnect()
-            #del thingy
-        finally:
-            mqttSend('connected', 0, '')
+                    duration = time.time() - startTime
+                    remaining = periodDuration - duration
+                    if remaining < 0.0: remaining = 0.0
+                    time.sleep(remaining)
 
-    time.sleep(args.suspend_time)
+            except btle.BTLEDisconnectError as e:
+                logging.debug('BTLEDisconnectError %s' % str(e))
+                logging.info('Disconnected...')
+                mqttSend('connected', 0, '')
+                thingy = None
+
+        if thingy:
+            try:
+                thingy.disconnect()
+                #del thingy
+            finally:
+                mqttSend('connected', 0, '')
+
+        logging.info('=====================================')
+        logging.info('Conn suspension for: %f [sec]' % args.suspend_time)
+        time.sleep(args.suspend_time)
 
 if __name__ == "__main__":
     main()

@@ -3,10 +3,12 @@
         "auth_config": "credentials.json",
         "hostname": "192.168.88.159",
         "port": 1883,
-        "publish_sleep_sec": 2
+        "publish_sleep_sec": 3
     },
     "generic": {
-        "conn_retry_suspend_time_sec": 5.0,
+        "conn_retry_after_time_sec": 20.0,
+        "conn_retry_suspend_time_sec": 300.0,
+        "conn_retries": 3,
         "verbosity": 5
     },
     "devices": [
@@ -14,7 +16,7 @@
             "mac_address": "e6:82:61:f6:7e:39",
             "topicprefix": "thingy/dev01/env/",
             "notification_period_msec": 2000,
-            "read_count": 8,
+            "read_count": 16,
             "sensors": {
                 "temperature": true,
                 "pressure": true,
@@ -24,7 +26,9 @@
                 "orientation": true,
                 "battery": true
             }
-        }
+        },
+        { "mac_address": "22:aa:bb:cc:dd:ee" },
+        { "mac_address": "33:aa:bb:cc:dd:ee" }
     ]
 }
 
